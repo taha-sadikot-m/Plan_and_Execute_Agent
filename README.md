@@ -1,6 +1,6 @@
 # AI Planning Agent
 
-A **multi-agent AI system** that transforms any complex problem statement into a board-ready strategic execution plan. Built with Next.js 15, powered by Anthropic Claude, and visualized with a real-time pipeline dashboard.
+A **multi-agent AI system** that transforms any complex problem statement into a board-ready strategic execution plan. Built with Next.js 15, powered by Google Gemini, and visualized with a real-time pipeline dashboard.
 
 ---
 
@@ -75,7 +75,7 @@ Stage 3 — Parallel Section Writing (4 agents run simultaneously)
 |---|---|
 | Framework | Next.js 15.1 (App Router) |
 | Language | TypeScript 5 |
-| AI Model | Anthropic Claude (`claude-sonnet-4-20250514`) |
+| AI Model | Google Gemini (`gemini-2.0-flash`) |
 | Styling | Tailwind CSS 3 |
 | Word Export | `docx` 8.5 |
 | PDF Export | Custom PDF template (built-in) |
@@ -107,7 +107,7 @@ ai-planning-agent/
 │   └── ExportButtons.tsx         # DOCX / PDF export buttons
 ├── lib/
 │   ├── orchestrator.ts           # Pipeline logic — stages, parallelism, logging
-│   ├── agentCaller.ts            # Shared Anthropic API utility
+│   ├── agentCaller.ts            # Shared Gemini API utility
 │   ├── prompts.ts                # All agent system prompts
 │   ├── docxBuilder.ts            # Word document builder
 │   └── pdfTemplate.ts            # PDF layout
@@ -123,7 +123,7 @@ ai-planning-agent/
 
 - **Node.js** v18 or higher — [Download](https://nodejs.org/)
 - **npm** v9 or higher (comes with Node.js)
-- **Anthropic API key** — [Get one here](https://console.anthropic.com/)
+- **Gemini API key** — [Get one here](https://aistudio.google.com/apikey)
 
 ---
 
@@ -150,10 +150,10 @@ Copy the example file:
 cp .env.local
 ```
 
-Open `.env.local` and add your Anthropic API key:
+Open `.env.local` and add your Gemini API key:
 
 ```env
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+GEMINI_API_KEY=your-gemini-api-key-here
 ```
 
 > **Important:** Never commit `.env.local` to version control. It is already in `.gitignore`.
@@ -311,7 +311,7 @@ This project is configured for **Vercel** deployment out of the box. The `vercel
 
 1. Push your repository to GitHub
 2. Import the project at [vercel.com/new](https://vercel.com/new)
-3. Add `ANTHROPIC_API_KEY` as an **Environment Variable** in the Vercel project settings
+3. Add `GEMINI_API_KEY` as an **Environment Variable** in the Vercel project settings
 4. Deploy
 
 > **Note:** The pipeline can take up to 60–90 seconds on first run. Make sure your hosting environment supports long-running API routes. Vercel's Hobby plan has a 60-second limit on the free tier; a Pro plan is needed for the 180-second limit configured in `vercel.json`.
@@ -321,8 +321,8 @@ This project is configured for **Vercel** deployment out of the box. The `vercel
 ## Troubleshooting
 
 **The pipeline times out or never completes**
-- Check that your `ANTHROPIC_API_KEY` is valid and has sufficient credits
-- Anthropic API rate limits can cause failures on high-concurrency plans — retry after a moment
+- Check that your `GEMINI_API_KEY` is valid and has sufficient quota
+- Gemini API rate limits can cause failures on high-concurrency plans — retry after a moment
 - Look at the browser console and the terminal running `npm run dev` for error messages
 
 **The report page immediately redirects back to home**
@@ -342,7 +342,7 @@ This project is configured for **Vercel** deployment out of the box. The `vercel
 
 | Variable | Required | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | Yes | Your Anthropic API key. Found at [console.anthropic.com](https://console.anthropic.com/) |
+| `GEMINI_API_KEY` | Yes | Your Google Gemini API key. Get one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 
 ---
 
