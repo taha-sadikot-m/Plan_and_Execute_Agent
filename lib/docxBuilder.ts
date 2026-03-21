@@ -18,15 +18,25 @@ import {
 import type { ReportJSON, Phase, Milestone } from "@/types";
 
 const COLORS = {
-  primary: "1a1a2e",
-  accent: "6366f1",
-  accentLight: "e0e7ff",
-  muted: "6b7280",
-  border: "e5e7eb",
+  primary: "0f172a",     // slate-900
+  body: "334155",        // slate-700
+  muted: "64748b",       // slate-500
+  subtle: "94a3b8",      // slate-400
+  border: "e2e8f0",      // slate-200
+  bgLight: "f8fafc",     // slate-50
   white: "ffffff",
+  // Section accents
+  orange: "f97316",
+  indigo: "6366f1",
+  sky: "0ea5e9",
+  emerald: "10b981",
+  purple: "a855f7",
+  // Legacy aliases
+  accent: "6366f1",
+  accentLight: "f1f5f9",
 };
 
-function sectionHeading(text: string): Paragraph {
+function sectionHeading(text: string, accentColor?: string): Paragraph {
   return new Paragraph({
     children: [
       new TextRun({
@@ -41,7 +51,7 @@ function sectionHeading(text: string): Paragraph {
     spacing: { before: 400, after: 200 },
     border: {
       bottom: {
-        color: COLORS.accent,
+        color: accentColor ?? COLORS.indigo,
         size: 6,
         style: BorderStyle.SINGLE,
         space: 4,
@@ -50,14 +60,14 @@ function sectionHeading(text: string): Paragraph {
   });
 }
 
-function subHeading(text: string): Paragraph {
+function subHeading(text: string, color?: string): Paragraph {
   return new Paragraph({
     children: [
       new TextRun({
         text,
         bold: true,
         size: 22,
-        color: COLORS.accent,
+        color: color ?? COLORS.primary,
         font: "Calibri",
       }),
     ],
@@ -67,7 +77,7 @@ function subHeading(text: string): Paragraph {
 
 function bodyText(text: string): Paragraph {
   return new Paragraph({
-    children: [new TextRun({ text, size: 20, font: "Calibri", color: COLORS.primary })],
+    children: [new TextRun({ text, size: 20, font: "Calibri", color: COLORS.body })],
     spacing: { after: 120 },
     alignment: AlignmentType.JUSTIFIED,
   });
@@ -75,7 +85,7 @@ function bodyText(text: string): Paragraph {
 
 function bulletItem(text: string, level = 0): Paragraph {
   return new Paragraph({
-    children: [new TextRun({ text, size: 20, font: "Calibri", color: COLORS.primary })],
+    children: [new TextRun({ text, size: 20, font: "Calibri", color: COLORS.body })],
     bullet: { level },
     spacing: { after: 80 },
   });
@@ -84,8 +94,8 @@ function bulletItem(text: string, level = 0): Paragraph {
 function labeledText(label: string, value: string): Paragraph {
   return new Paragraph({
     children: [
-      new TextRun({ text: `${label}: `, bold: true, size: 20, font: "Calibri", color: COLORS.accent }),
-      new TextRun({ text: value, size: 20, font: "Calibri", color: COLORS.primary }),
+      new TextRun({ text: `${label}: `, bold: true, size: 20, font: "Calibri", color: COLORS.primary }),
+      new TextRun({ text: value, size: 20, font: "Calibri", color: COLORS.body }),
     ],
     spacing: { after: 100 },
   });
@@ -104,10 +114,10 @@ function milestoneTable(milestones: Milestone[]): Table {
         new TableCell({
           children: [
             new Paragraph({
-              children: [new TextRun({ text: h, bold: true, size: 18, color: COLORS.white, font: "Calibri" })],
+              children: [new TextRun({ text: h, bold: true, size: 18, color: COLORS.muted, font: "Calibri" })],
             }),
           ],
-          shading: { fill: COLORS.accent, type: ShadingType.CLEAR, color: COLORS.accent },
+          shading: { fill: COLORS.bgLight, type: ShadingType.CLEAR, color: "auto" },
           margins: { top: 80, bottom: 80, left: 100, right: 100 },
         })
     ),
@@ -125,7 +135,7 @@ function milestoneTable(milestones: Milestone[]): Table {
                 }),
               ],
               shading: {
-                fill: i % 2 === 0 ? COLORS.accentLight : COLORS.white,
+                fill: i % 2 === 0 ? COLORS.bgLight : COLORS.white,
                 type: ShadingType.CLEAR,
                 color: "auto",
               },
@@ -192,7 +202,7 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
     pageBreak(),
 
     // ── Section 1: Problem Breakdown ────────────────────────────────────────
-    sectionHeading(`1. ${problemBreakdown.headline}`),
+    sectionHeading(`1. ${problemBreakdown.headline}`, COLORS.orange),
     subHeading("Core Problem Statement"),
     bodyText(problemBreakdown.coreProblemStatement),
     subHeading("Root Cause Analysis"),
@@ -223,18 +233,18 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
           text: `📊 ${problemBreakdown.keyStatistic}`,
           size: 20,
           bold: true,
-          color: COLORS.accent,
+          color: "166534",
           font: "Calibri",
         }),
       ],
       spacing: { before: 200, after: 200 },
-      shading: { fill: COLORS.accentLight, type: ShadingType.CLEAR, color: "auto" },
+      shading: { fill: "f0fdf4", type: ShadingType.CLEAR, color: "auto" },
       indent: { left: convertInchesToTwip(0.3), right: convertInchesToTwip(0.3) },
     }),
     pageBreak(),
 
     // ── Section 2: Stakeholders ──────────────────────────────────────────────
-    sectionHeading(`2. ${stakeholders.headline}`),
+    sectionHeading(`2. ${stakeholders.headline}`, COLORS.indigo),
     bodyText(stakeholders.overview),
     ...stakeholders.stakeholders.flatMap((s) => [
       subHeading(s.name),
@@ -255,7 +265,7 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
     pageBreak(),
 
     // ── Section 3: Solution Approach ─────────────────────────────────────────
-    sectionHeading(`3. ${solutionApproach.headline}`),
+    sectionHeading(`3. ${solutionApproach.headline}`, COLORS.sky),
     labeledText("Strategic Posture", solutionApproach.strategicPosture),
     bodyText(solutionApproach.coreApproach),
     subHeading("Solution Pillars"),
@@ -278,7 +288,7 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
     ...solutionApproach.tradeoffs.flatMap((t) => [
       new Paragraph({
         children: [
-          new TextRun({ text: `Decision: `, bold: true, size: 20, font: "Calibri", color: COLORS.accent }),
+          new TextRun({ text: `Decision: `, bold: true, size: 20, font: "Calibri", color: COLORS.primary }),
           new TextRun({ text: t.decision, size: 20, font: "Calibri" }),
         ],
         spacing: { before: 120, after: 40 },
@@ -289,7 +299,7 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
     pageBreak(),
 
     // ── Section 4: Action Plan ───────────────────────────────────────────────
-    sectionHeading(`4. ${actionPlan.headline}`),
+    sectionHeading(`4. ${actionPlan.headline}`, COLORS.emerald),
     subHeading("Quick Wins (First 2 Weeks)"),
     ...actionPlan.quickWins.map((w) => bulletItem(w)),
     ...actionPlan.phases.flatMap((phase: Phase) => [
@@ -307,11 +317,11 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
       labeledText("Budget", phase.resourceRequirements.budget),
       new Paragraph({
         children: [
-          new TextRun({ text: "Phase Gate: ", bold: true, size: 20, color: COLORS.accent, font: "Calibri" }),
-          new TextRun({ text: phase.phaseGate, size: 20, font: "Calibri", italics: true }),
+          new TextRun({ text: "Phase Gate: ", bold: true, size: 20, color: "7e22ce", font: "Calibri" }),
+          new TextRun({ text: phase.phaseGate, size: 20, font: "Calibri", italics: true, color: "581c87" }),
         ],
         spacing: { before: 200, after: 200 },
-        shading: { fill: COLORS.accentLight, type: ShadingType.CLEAR, color: "auto" },
+        shading: { fill: "faf5ff", type: ShadingType.CLEAR, color: "auto" },
         indent: { left: convertInchesToTwip(0.3), right: convertInchesToTwip(0.3) },
       }),
     ]),
@@ -321,7 +331,7 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
 
   if (metadata.references && metadata.references.length > 0) {
     sections.push(pageBreak());
-    sections.push(sectionHeading("References & Sources"));
+    sections.push(sectionHeading("References & Sources", COLORS.muted));
     sections.push(
       bodyText(
         "The following sources were crawled by the AI agents during the research and synthesis phases using Gemini's native Google Search Grounding:"
@@ -332,7 +342,7 @@ export async function buildDocx(report: ReportJSON): Promise<Buffer> {
         new Paragraph({
           children: [
             new TextRun({ text: `${i + 1}. `, bold: true, size: 20, font: "Calibri", color: COLORS.muted }),
-            new TextRun({ text: ref.title, bold: true, size: 20, font: "Calibri", color: COLORS.accent }),
+            new TextRun({ text: ref.title, bold: true, size: 20, font: "Calibri", color: COLORS.primary }),
           ],
           spacing: { after: 40 },
         })

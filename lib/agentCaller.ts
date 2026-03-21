@@ -89,6 +89,12 @@ export async function callAgent<T>(
     throw new Error(`Agent ${agentName} returned no response from Gemini.`);
   }
 
+  // Check if response was truncated due to token limit
+  const finishReason = result.response.candidates?.[0]?.finishReason;
+  if (finishReason === "MAX_TOKENS") {
+    console.warn(`⚠️  Agent ${agentName} hit MAX_TOKENS limit (${maxTokens}). Response may be incomplete.`);
+  }
+
   const fullText = result.response.text();
 
   if (!fullText) {
@@ -102,9 +108,23 @@ export async function callAgent<T>(
   let data: T;
   try {
     data = JSON.parse(jsonText) as T;
-  } catch {
+  } catch (parseError) {
+    // Show more context for debugging - first 1000 chars of full text
+    console.error(`JSON Parse Error for ${agentName}:`, parseError);
+    console.error(`Full text length: ${fullText.length} chars`);
+    console.error(`Clean text length: ${cleanText.length} chars`);
+    console.error(`Extracted JSON length: ${jsonText.length} chars`);
+    console.error(`Finish reason: ${finishReason}`);
+    
+    if (finishReason === "MAX_TOKENS") {
+      throw new Error(
+        `Agent ${agentName} hit token limit (${maxTokens} tokens) and returned incomplete JSON. ` +
+        `Increase maxTokens in orchestrator.ts for this agent.`
+      );
+    }
+    
     throw new Error(
-      `Agent ${agentName} returned invalid JSON.\nRaw output: ${jsonText.slice(0, 500)}`
+      `Agent ${agentName} returned invalid JSON.\nRaw output: ${fullText.slice(0, 1000)}`
     );
   }
 

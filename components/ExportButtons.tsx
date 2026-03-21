@@ -51,38 +51,18 @@ export function ExportButtons({ report }: Props) {
         body: JSON.stringify({ report }),
       });
 
-      if (!res.ok) throw new Error("PDF template generation failed");
-      const { html } = await res.json();
+      if (!res.ok) throw new Error("PDF export failed");
 
-      const script = document.createElement("script");
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-
-      await new Promise<void>((resolve, reject) => {
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error("Failed to load html2pdf.js"));
-        document.head.appendChild(script);
-      });
-
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
       const slug = report.metadata.problem.slice(0, 40).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const html2pdf = (window as any).html2pdf;
-      
-      // Fix: directly use from(html) so the <head> styles are not stripped by a container div
-      await html2pdf()
-        .set({
-          margin: [10, 10, 10, 10],
-          filename: `execution-plan-${slug}.pdf`,
-          image: { type: "jpeg", quality: 0.95 },
-          html2canvas: { scale: 2, useCORS: true },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { 
-            mode: ["css", "legacy"],
-            avoid: ['p', 'h2', 'h3', 'h4', 'li', 'tr', '.avoid-break', '.stats-box']
-          },
-        })
-        .from(html)
-        .save();
+      a.href = url;
+      a.download = `execution-plan-${slug}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
     } catch (err) {
       setError(err instanceof Error ? err.message : "PDF export failed");
     } finally {

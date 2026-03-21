@@ -67,19 +67,19 @@ export async function runPipeline(
       systemPrompt: PLANNER_SYSTEM_PROMPT,
       userMessage,
       agentName: "planner",
-      maxTokens: 3000,
+      maxTokens: 8192,
     }),
     callAgent<DomainOutput>({
       systemPrompt: DOMAIN_SYSTEM_PROMPT,
       userMessage,
       agentName: "domain",
-      maxTokens: 2500,
+      maxTokens: 8192,
     }),
     callAgent<RiskOutput>({
       systemPrompt: RISK_SYSTEM_PROMPT,
       userMessage,
       agentName: "risk",
-      maxTokens: 2500,
+      maxTokens: 8192,
     }),
   ]);
 
@@ -112,7 +112,7 @@ export async function runPipeline(
     systemPrompt: synthesizerPrompt,
     userMessage: "Synthesize the provided agent outputs into a strategic intelligence brief.",
     agentName: "synthesizer",
-    maxTokens: 4000,
+    maxTokens: 8192,
   });
 
   log(logEntry("stage2", "synthesizer", "complete", synthesisResult.durationMs, synthesisResult.thinkingContent));
@@ -139,25 +139,25 @@ export async function runPipeline(
       systemPrompt: buildProblemBreakdownPrompt(synthesisResult.data, problem),
       userMessage: sectionUserMessage,
       agentName: "section:problemBreakdown",
-      maxTokens: 3000,
+      maxTokens: 8192,
     }),
     callAgent<StakeholdersSection>({
       systemPrompt: buildStakeholdersPrompt(synthesisResult.data, problem),
       userMessage: sectionUserMessage,
       agentName: "section:stakeholders",
-      maxTokens: 3000,
+      maxTokens: 8192,
     }),
     callAgent<SolutionApproachSection>({
       systemPrompt: buildSolutionApproachPrompt(synthesisResult.data, problem),
       userMessage: sectionUserMessage,
       agentName: "section:solutionApproach",
-      maxTokens: 3000,
+      maxTokens: 8192,
     }),
     callAgent<ActionPlanSection>({
       systemPrompt: buildActionPlanPrompt(synthesisResult.data, problem),
       userMessage: sectionUserMessage,
       agentName: "section:actionPlan",
-      maxTokens: 4000,
+      maxTokens: 8192,
     }),
   ]);
 

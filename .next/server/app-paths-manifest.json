@@ -1,1 +1,5 @@
-{}
+{
+  "/api/export/pdf/route": "app/api/export/pdf/route.js",
+  "/api/export/docx/route": "app/api/export/docx/route.js",
+  "/report/page": "app/report/page.js"
+}

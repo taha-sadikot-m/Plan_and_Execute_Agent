@@ -1,7 +1,7 @@
 // app/api/export/pdf/route.ts
-// Returns the styled HTML — client uses html2pdf.js to render it
+// Generates a proper vector PDF with selectable text server-side
 import { NextRequest, NextResponse } from "next/server";
-import { buildPdfHtml } from "@/lib/pdfTemplate";
+import { buildPdfBuffer } from "@/lib/pdfTemplate";
 import type { ReportJSON } from "@/types";
 
 export const runtime = "nodejs";
@@ -15,10 +15,22 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const html = buildPdfHtml(report);
-    return NextResponse.json({ html });
+    const buffer = await buildPdfBuffer(report);
+    const slug = report.metadata.problem
+      .slice(0, 40)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-");
+    const filename = `execution-plan-${slug}.pdf`;
+
+    return new NextResponse(Buffer.from(buffer), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Length": buffer.length.toString(),
+      },
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "PDF template generation failed";
+    const message = err instanceof Error ? err.message : "PDF generation failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
