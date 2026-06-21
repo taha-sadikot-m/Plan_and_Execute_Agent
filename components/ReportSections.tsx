@@ -1,5 +1,6 @@
 "use client";
 // components/ReportSections.tsx
+import { orderSectionsForReport } from "@/lib/sectionNormalize";
 import type {
   ReportJSON,
   SectionId,
@@ -196,6 +197,14 @@ function BlockRenderer({ block, report }: { block: ContentBlock; report: ReportJ
 }
 
 function SectionContentView({ section, report }: { section: ReportSection; report: ReportJSON }) {
+  if (!section.blocks || section.blocks.length === 0) {
+    return (
+      <p className="text-sm text-slate-400 italic">
+        No content generated for this section.
+      </p>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {section.blocks.map((block, i) => (
@@ -211,13 +220,18 @@ interface ReportSectionsProps {
 }
 
 export function ReportSections({ report, onEdit }: ReportSectionsProps) {
+  const orderedSections = orderSectionsForReport(
+    report.metadata.sectionConfig,
+    report.sections
+  );
+
   return (
     <div className="space-y-8">
-      {report.sections.map((section, index) => (
+      {orderedSections.map((section, index) => (
         <SectionWrapper
           key={section.id}
           id={section.id}
-          title={section.headline}
+          title={section.headline || section.title}
           badge={String(index + 1).padStart(2, "0")}
           accentColor={ACCENT_COLORS[index % ACCENT_COLORS.length]}
           onEdit={onEdit}

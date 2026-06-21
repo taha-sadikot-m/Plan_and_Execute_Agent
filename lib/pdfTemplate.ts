@@ -2,6 +2,7 @@
 // Generates a proper vector PDF with selectable text using PDFKit
 
 import PDFDocument from "pdfkit";
+import { orderSectionsForReport } from "./sectionNormalize";
 import type { ReportJSON, ContentBlock, ReportSection } from "@/types";
 
 // ── Color palette matching GUI ──────────────────────────────────────────────
@@ -321,14 +322,15 @@ function renderSection(
   badge: string,
   accentColor: string
 ) {
-  sectionHead(doc, badge, section.headline, accentColor);
+  sectionHead(doc, badge, section.headline || section.title, accentColor);
   for (const block of section.blocks) {
     renderBlock(doc, block);
   }
 }
 
 export async function buildPdfBuffer(report: ReportJSON): Promise<Buffer> {
-  const { sections, metadata } = report;
+  const { metadata } = report;
+  const sections = orderSectionsForReport(metadata.sectionConfig, report.sections);
 
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];

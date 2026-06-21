@@ -16,6 +16,7 @@ import {
   PageBreak,
 } from "docx";
 import type { ReportJSON, ContentBlock, ReportSection } from "@/types";
+import { orderSectionsForReport } from "./sectionNormalize";
 
 const COLORS = {
   primary: "0f172a",
@@ -215,8 +216,9 @@ function blockToParagraphs(block: ContentBlock): (Paragraph | Table)[] {
 
 function sectionToParagraphs(section: ReportSection, index: number): (Paragraph | Table)[] {
   const accent = SECTION_ACCENT_COLORS[index % SECTION_ACCENT_COLORS.length];
+  const heading = section.headline || section.title;
   const out: (Paragraph | Table)[] = [
-    sectionHeading(`${index + 1}. ${section.headline}`, accent),
+    sectionHeading(`${index + 1}. ${heading}`, accent),
   ];
   for (const block of section.blocks) {
     out.push(...blockToParagraphs(block));
@@ -225,7 +227,8 @@ function sectionToParagraphs(section: ReportSection, index: number): (Paragraph 
 }
 
 export async function buildDocx(report: ReportJSON): Promise<Buffer> {
-  const { sections, metadata } = report;
+  const { metadata } = report;
+  const sections = orderSectionsForReport(metadata.sectionConfig, report.sections);
 
   const docChildren: (Paragraph | Table)[] = [
     new Paragraph({

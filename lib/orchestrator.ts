@@ -3,6 +3,7 @@
 
 import { callAgent } from "./agentCaller";
 import { mapWithConcurrency } from "./concurrency";
+import { normalizeSectionData, orderSectionsForReport } from "./sectionNormalize";
 import {
   PLANNER_SYSTEM_PROMPT,
   DOMAIN_SYSTEM_PROMPT,
@@ -48,13 +49,16 @@ function makeRetryHandler(
   agent: string,
   onProgress?: (log: AgentLogEntry) => void
 ) {
-  return ({ attempt, delayMs }: { attempt: number; delayMs: number }) => {
+  return ({ attempt, delayMs, reason }: { attempt: number; delayMs: number; reason?: "rate_limit" | "parse" }) => {
     onProgress?.(
       logEntry(stage, agent, "retrying", undefined, undefined, {
         retryDelayMs: delayMs,
         retryAttempt: attempt,
       })
     );
+    if (reason === "parse") {
+      console.log(`[Pipeline] ${agent} retrying due to invalid JSON (attempt ${attempt})`);
+    }
   };
 }
 
@@ -73,39 +77,41 @@ export async function runPipeline(
 
   const userMessage = `Problem statement: "${problem}"`;
 
-  // ── STAGE 1: Sequential — one agent at a time, no grounding ────────────────
+  // ── STAGE 1: Three agents in parallel — no grounding ───────────────────────
 
   log(logEntry("stage1", "planner", "running"));
-  const plannerResult = await callAgent<PlannerOutput>({
-    systemPrompt: PLANNER_SYSTEM_PROMPT,
-    userMessage,
-    agentName: "planner",
-    maxTokens: 8192,
-    useGrounding: false,
-    onRetry: makeRetryHandler("stage1", "planner", onProgress),
-  });
-  log(logEntry("stage1", "planner", "complete", plannerResult.durationMs, plannerResult.thinkingContent));
-
   log(logEntry("stage1", "risk", "running"));
-  const riskResult = await callAgent<RiskOutput>({
-    systemPrompt: RISK_SYSTEM_PROMPT,
-    userMessage,
-    agentName: "risk",
-    maxTokens: 8192,
-    useGrounding: false,
-    onRetry: makeRetryHandler("stage1", "risk", onProgress),
-  });
-  log(logEntry("stage1", "risk", "complete", riskResult.durationMs, riskResult.thinkingContent));
-
   log(logEntry("stage1", "domain", "running"));
-  const domainResult = await callAgent<DomainOutput>({
-    systemPrompt: DOMAIN_SYSTEM_PROMPT,
-    userMessage,
-    agentName: "domain",
-    maxTokens: 8192,
-    useGrounding: false,
-    onRetry: makeRetryHandler("stage1", "domain", onProgress),
-  });
+
+  const [plannerResult, riskResult, domainResult] = await Promise.all([
+    callAgent<PlannerOutput>({
+      systemPrompt: PLANNER_SYSTEM_PROMPT,
+      userMessage,
+      agentName: "planner",
+      maxTokens: 8192,
+      useGrounding: false,
+      onRetry: makeRetryHandler("stage1", "planner", onProgress),
+    }),
+    callAgent<RiskOutput>({
+      systemPrompt: RISK_SYSTEM_PROMPT,
+      userMessage,
+      agentName: "risk",
+      maxTokens: 8192,
+      useGrounding: false,
+      onRetry: makeRetryHandler("stage1", "risk", onProgress),
+    }),
+    callAgent<DomainOutput>({
+      systemPrompt: DOMAIN_SYSTEM_PROMPT,
+      userMessage,
+      agentName: "domain",
+      maxTokens: 8192,
+      useGrounding: false,
+      onRetry: makeRetryHandler("stage1", "domain", onProgress),
+    }),
+  ]);
+
+  log(logEntry("stage1", "planner", "complete", plannerResult.durationMs, plannerResult.thinkingContent));
+  log(logEntry("stage1", "risk", "complete", riskResult.durationMs, riskResult.thinkingContent));
   log(logEntry("stage1", "domain", "complete", domainResult.durationMs, domainResult.thinkingContent));
 
   console.log(`[Pipeline] Stage 1 complete in ${Date.now() - pipelineStart}ms`);
@@ -170,6 +176,7 @@ export async function runPipeline(
         agentName: `section:${sec.title}`,
         maxTokens: 8192,
         useGrounding: true,
+        maxParseRetries: 3,
         onRetry: makeRetryHandler("stage3", `section:${sec.title}`, onProgress),
       });
 
@@ -187,7 +194,10 @@ export async function runPipeline(
   );
 
   return {
-    sections: sectionResults.map(({ result }) => result.data),
+    sections: orderSectionsForReport(
+      sections,
+      sectionResults.map(({ sec, result }) => normalizeSectionData(sec, result.data))
+    ),
     metadata: {
       problem,
       sectionConfig: sections,

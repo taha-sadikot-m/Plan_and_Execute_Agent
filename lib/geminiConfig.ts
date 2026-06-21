@@ -5,14 +5,20 @@ export interface GeminiConfig {
   apiKey: string;
   model: string;
   maxRetries: number;
+  maxParseRetries: number;
 }
 
 export interface GeminiRetryOptions {
-  onRetry?: (info: { attempt: number; delayMs: number }) => void;
+  onRetry?: (info: {
+    attempt: number;
+    delayMs: number;
+    reason?: "rate_limit" | "parse";
+  }) => void;
 }
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_MAX_PARSE_RETRIES = 3;
 
 function cleanEnvValue(value: string | undefined): string {
   if (!value) return "";
@@ -52,10 +58,17 @@ export function getGeminiConfig(): GeminiConfig {
   const maxRetries =
     Number.isFinite(envRetries) && envRetries >= 0 ? envRetries : DEFAULT_MAX_RETRIES;
 
+  const envParseRetries = Number(process.env.GEMINI_MAX_PARSE_RETRIES);
+  const maxParseRetries =
+    Number.isFinite(envParseRetries) && envParseRetries >= 0
+      ? envParseRetries
+      : DEFAULT_MAX_PARSE_RETRIES;
+
   return {
     apiKey,
     model: cleanEnvValue(process.env.GEMINI_MODEL) || DEFAULT_MODEL,
     maxRetries,
+    maxParseRetries,
   };
 }
 

@@ -10,7 +10,7 @@ import {
   type GeminiRetryOptions,
 } from "./geminiConfig";
 
-const DEFAULT_MAX_CONCURRENT = 1;
+const DEFAULT_MAX_CONCURRENT = 3;
 
 let activeCount = 0;
 let cooldownUntil = 0;
@@ -71,7 +71,7 @@ export interface GeminiRequestOptions extends GeminiRetryOptions {
 
 /**
  * Holds the queue slot for the entire retry loop so agents cannot thundering-herd
- * after a 429 when GEMINI_MAX_CONCURRENT=1.
+ * after a 429 when concurrent slots are limited.
  */
 export async function runGeminiWithRetries<T>(
   fn: () => Promise<T>,

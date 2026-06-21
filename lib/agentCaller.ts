@@ -11,6 +11,7 @@ export interface AgentCallOptions {
   agentName: string;
   maxTokens?: number;
   useGrounding?: boolean;
+  maxParseRetries?: number;
   onRetry?: GeminiRetryOptions["onRetry"];
 }
 
@@ -98,77 +99,9 @@ async function generateWithModel(
   return generativeModel.generateContent(userMessage);
 }
 
-export async function callAgent<T>(
-  options: AgentCallOptions
-): Promise<AgentCallResult<T>> {
-  const {
-    systemPrompt,
-    userMessage,
-    agentName,
-    maxTokens = 4096,
-    useGrounding = true,
-    onRetry,
-  } = options;
-  const start = Date.now();
-  let attemptCount = 1;
+type GenerateContentResult = Awaited<ReturnType<typeof generateWithModel>>;
 
-  const result = await runGeminiWithRetries(
-    () => generateWithModel(systemPrompt, userMessage, maxTokens, useGrounding),
-    {
-      agentName,
-      onRetry: (info) => {
-        attemptCount = info.attempt + 1;
-        onRetry?.(info);
-      },
-    }
-  );
-
-  const durationMs = Date.now() - start;
-  console.log(
-    `[Gemini] ${agentName} completed in ${durationMs}ms (grounding=${useGrounding}, attempts=${attemptCount})`
-  );
-
-  if (!result.response) {
-    throw new Error(`Agent ${agentName} returned no response from Gemini.`);
-  }
-
-  const finishReason = result.response.candidates?.[0]?.finishReason;
-  if (finishReason === "MAX_TOKENS") {
-    console.warn(
-      `Agent ${agentName} hit MAX_TOKENS limit (${maxTokens}). Response may be incomplete.`
-    );
-  }
-
-  const fullText = result.response.text();
-
-  if (!fullText) {
-    throw new Error(`Agent ${agentName} returned empty text from Gemini.`);
-  }
-
-  const thinkingContent = extractThinking(fullText);
-  const cleanText = stripThinkingTags(fullText);
-  const jsonText = extractJSON(cleanText);
-
-  let data: T;
-  try {
-    data = JSON.parse(jsonText) as T;
-  } catch (parseError) {
-    console.error(`JSON Parse Error for ${agentName}:`, parseError);
-    console.error(`Full text length: ${fullText.length} chars`);
-    console.error(`Finish reason: ${finishReason}`);
-
-    if (finishReason === "MAX_TOKENS") {
-      throw new Error(
-        `Agent ${agentName} hit token limit (${maxTokens} tokens) and returned incomplete JSON. ` +
-          `Increase maxTokens in orchestrator.ts for this agent.`
-      );
-    }
-
-    throw new Error(
-      `Agent ${agentName} returned invalid JSON.\nRaw output: ${fullText.slice(0, 1000)}`
-    );
-  }
-
+function extractReferences(result: GenerateContentResult): Array<{ title: string; uri: string }> {
   const references: Array<{ title: string; uri: string }> = [];
   try {
     const rawChunks =
@@ -181,11 +114,125 @@ export async function callAgent<T>(
   } catch (e) {
     console.warn("Could not parse grounding chunks", e);
   }
+  return references;
+}
 
-  return {
-    data,
-    thinkingContent,
-    durationMs,
-    references,
-  };
+const PARSE_RETRY_SUFFIX =
+  "\n\nIMPORTANT: Your previous response was invalid JSON. Return ONLY valid JSON matching the schema. No markdown fences, no commentary outside the JSON object.";
+
+export async function callAgent<T>(
+  options: AgentCallOptions
+): Promise<AgentCallResult<T>> {
+  const {
+    systemPrompt,
+    userMessage,
+    agentName,
+    maxTokens = 4096,
+    useGrounding = true,
+    maxParseRetries: maxParseRetriesOverride,
+    onRetry,
+  } = options;
+  const { maxParseRetries: defaultParseRetries } = getGeminiConfig();
+  const maxParseRetries = maxParseRetriesOverride ?? defaultParseRetries;
+
+  const start = Date.now();
+  let httpAttemptCount = 1;
+  let lastParseError: unknown;
+  let lastFullText = "";
+  let hitMaxTokens = false;
+
+  for (let parseAttempt = 0; parseAttempt <= maxParseRetries; parseAttempt++) {
+    if (parseAttempt > 0) {
+      console.warn(
+        `[Gemini] ${agentName} parse retry ${parseAttempt}/${maxParseRetries}`
+      );
+      onRetry?.({ attempt: parseAttempt, delayMs: 0, reason: "parse" });
+    }
+
+    const effectiveMaxTokens =
+      hitMaxTokens && parseAttempt > 0
+        ? Math.min(Math.floor(maxTokens * 1.5), 16384)
+        : maxTokens;
+
+    const effectiveUserMessage =
+      parseAttempt > 0 ? `${userMessage}${PARSE_RETRY_SUFFIX}` : userMessage;
+
+    const result: GenerateContentResult = await runGeminiWithRetries(
+      () =>
+        generateWithModel(
+          systemPrompt,
+          effectiveUserMessage,
+          effectiveMaxTokens,
+          useGrounding
+        ),
+      {
+        agentName,
+        onRetry: (info) => {
+          httpAttemptCount = info.attempt + 1;
+          onRetry?.({ ...info, reason: "rate_limit" });
+        },
+      }
+    );
+
+    if (!result.response) {
+      throw new Error(`Agent ${agentName} returned no response from Gemini.`);
+    }
+
+    const finishReason = result.response.candidates?.[0]?.finishReason;
+    hitMaxTokens = finishReason === "MAX_TOKENS";
+    if (hitMaxTokens) {
+      console.warn(
+        `Agent ${agentName} hit MAX_TOKENS limit (${effectiveMaxTokens}). Response may be incomplete.`
+      );
+    }
+
+    const fullText = result.response.text();
+    lastFullText = fullText;
+
+    if (!fullText) {
+      if (parseAttempt === maxParseRetries) {
+        throw new Error(`Agent ${agentName} returned empty text from Gemini.`);
+      }
+      continue;
+    }
+
+    const thinkingContent = extractThinking(fullText);
+    const cleanText = stripThinkingTags(fullText);
+    const jsonText = extractJSON(cleanText);
+
+    try {
+      const data = JSON.parse(jsonText) as T;
+      const durationMs = Date.now() - start;
+      console.log(
+        `[Gemini] ${agentName} completed in ${durationMs}ms (grounding=${useGrounding}, httpAttempts=${httpAttemptCount}, parseAttempts=${parseAttempt + 1})`
+      );
+
+      return {
+        data,
+        thinkingContent,
+        durationMs,
+        references: extractReferences(result),
+      };
+    } catch (parseError) {
+      lastParseError = parseError;
+      console.error(`JSON Parse Error for ${agentName} (attempt ${parseAttempt + 1}):`, parseError);
+      console.error(`Full text length: ${fullText.length} chars`);
+      console.error(`Finish reason: ${finishReason}`);
+
+      if (parseAttempt === maxParseRetries) {
+        if (hitMaxTokens) {
+          throw new Error(
+            `Agent ${agentName} hit token limit (${effectiveMaxTokens} tokens) and returned incomplete JSON after ${maxParseRetries + 1} attempts.`
+          );
+        }
+        throw new Error(
+          `Agent ${agentName} returned invalid JSON after ${maxParseRetries + 1} attempts.\nRaw output: ${lastFullText.slice(0, 1000)}`
+        );
+      }
+    }
+  }
+
+  throw new Error(
+    `Agent ${agentName} failed to produce valid JSON: ${lastParseError instanceof Error ? lastParseError.message : String(lastParseError)}`
+  );
 }
