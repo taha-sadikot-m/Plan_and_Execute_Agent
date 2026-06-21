@@ -3,6 +3,7 @@ import type {
   DomainOutput,
   RiskOutput,
   SynthesisOutput,
+  SectionConfig,
 } from "@/types";
 
 // ─── Planner Agent ────────────────────────────────────────────────────────────
@@ -249,12 +250,27 @@ export const RISK_SYSTEM_PROMPT = `
 
 // ─── Insight Synthesizer ──────────────────────────────────────────────────────
 
+function buildSectionGuidanceSchema(sections: SectionConfig[]): string {
+  const entries = sections
+    .map((s) => `      "${s.id}": string`)
+    .join(",\n");
+  return `{\n${entries}\n    }`;
+}
+
 export function buildSynthesizerPrompt(
   planner: PlannerOutput,
   domain: DomainOutput,
   risk: RiskOutput,
-  problem: string
+  problem: string,
+  sections: SectionConfig[]
 ): string {
+  const sectionList = sections
+    .map(
+      (s, i) =>
+        `  ${i + 1}. id="${s.id}" title="${s.title}" — ${s.description}`
+    )
+    .join("\n");
+
   return `
 <role>
   You are a McKinsey-grade strategic synthesis specialist. You receive outputs
@@ -285,15 +301,24 @@ export function buildSynthesizerPrompt(
   </risk_output>
 </context>
 
+<report_sections>
+  The user has defined the following report sections (in order):
+${sectionList}
+</report_sections>
+
 <task>
   Synthesize all three inputs into a strategic intelligence brief.
-  Your output becomes the SHARED CONTEXT for four downstream section-writer agents.
+  Your output becomes the SHARED CONTEXT for ${sections.length} downstream section-writer agents.
   It must be complete enough that each section writer can work independently
   without re-reading the raw agent outputs.
 
   Most importantly: identify where the three agents AGREE (reinforcing signals),
   where they CONTRADICT (tension points that need resolution), and what the
   combined picture reveals that NONE of the three could show alone.
+
+  For sectionGuidance: provide one specific guidance string per section id listed above.
+  Each guidance must reflect that section's title and description while keeping
+  the full report coherent and non-contradictory.
 </task>
 
 <reasoning_protocol>
@@ -329,12 +354,7 @@ export function buildSynthesizerPrompt(
     "criticalPathItems": string[],
     "watchOutFor": string[],
     "opportunityHighlights": string[],
-    "sectionGuidance": {
-      "problemBreakdown": string,
-      "stakeholders": string,
-      "solutionApproach": string,
-      "actionPlan": string
-    }
+    "sectionGuidance": ${buildSectionGuidanceSchema(sections)}
   }
 </output_schema>
 
@@ -342,7 +362,8 @@ export function buildSynthesizerPrompt(
   REQUIRED:
   - strategicNarrative must SYNTHESIZE (find connections), not summarize (list inputs)
   - keyInsights must cite sourceAgents for traceability (5-7 insights)
-  - sectionGuidance must be specific enough that all four sections stay CONSISTENT
+  - sectionGuidance must include exactly one entry for each section id: ${sections.map((s) => s.id).join(", ")}
+  - sectionGuidance must be specific enough that all sections stay CONSISTENT
   - postureRationale must reference specific findings from the input agents
 
   FORBIDDEN:
@@ -354,18 +375,19 @@ export function buildSynthesizerPrompt(
   `;
 }
 
-// ─── Section Writer Prompts ───────────────────────────────────────────────────
+// ─── Dynamic Section Writer Prompt ────────────────────────────────────────────
 
 function buildSectionBase(
   synthesis: SynthesisOutput,
-  problem: string
+  problem: string,
+  totalSections: number
 ): string {
   return `
 <role>
   You are a senior business consultant and report writer. You produce
   board-ready, investor-grade written content. Your writing is specific,
   evidence-grounded, and structured. You never use filler phrases.
-  You are ONE of four section writers running in parallel — write ONLY your assigned section.
+  You are ONE of ${totalSections} section writers running in parallel — write ONLY your assigned section.
 </role>
 
 <context>
@@ -378,189 +400,63 @@ function buildSectionBase(
   `;
 }
 
-export function buildProblemBreakdownPrompt(
+export function buildDynamicSectionPrompt(
   synthesis: SynthesisOutput,
-  problem: string
+  problem: string,
+  section: SectionConfig,
+  guidance: string,
+  totalSections: number
 ): string {
   return `
-${buildSectionBase(synthesis, problem)}
+${buildSectionBase(synthesis, problem, totalSections)}
+
+<assigned_section>
+  Section id: "${section.id}"
+  Section title: "${section.title}"
+  User description (what this section must cover):
+  "${section.description}"
+  
+  Guidance from synthesis agent:
+  "${guidance || "Write comprehensive content aligned with the strategic synthesis and user description."}"
+</assigned_section>
 
 <task>
-  Write the "Problem Breakdown" section of the strategic plan.
+  Write the "${section.title}" section of the strategic plan.
+  Structure the content using appropriate block types based on the section's purpose
+  and the user's description. Choose block types that best present the information:
+  - "paragraph" for prose
+  - "subheading" + nested content for major sub-topics
+  - "bullets" or "numbered" for lists
+  - "table" for structured comparisons, milestones, or key-value data
+  - "callout" for key insights, statistics, or highlighted takeaways
   
-  Guidance from synthesis agent: "${synthesis.sectionGuidance.problemBreakdown}"
-  
-  This section must:
-  - Define the problem precisely from first principles
-  - Identify root causes with their mechanisms (WHY, not just WHAT)
-  - Explain why existing solutions are insufficient
-  - Frame the opportunity that emerges from this gap
+  Use citation markers like [1], [2] when referencing facts that would appear in references.
+  Produce 4-10 blocks depending on section complexity.
 </task>
 
 <reasoning_protocol>
   Before producing output, reason inside <thinking> tags.
   In your thinking work through:
-  1. Based on the synthesis, what is the TRUE root cause of this problem?
-  2. What existing solutions exist, and why do they fundamentally fail?
-  3. How should this problem be framed as an opportunity?
+  1. What is the core purpose of this section given its title and description?
+  2. What block structure best serves that purpose?
+  3. How does this section connect to the strategic synthesis without contradicting other sections?
   Only after completing this thinking should you produce the JSON output.
 </reasoning_protocol>
 
 <output_schema>
   First output a <thinking> block with your reasoning. Then output a valid JSON object:
   {
-    "sectionId": "problemBreakdown",
+    "id": "${section.id}",
+    "title": "${section.title}",
+    "description": "${section.description.replace(/"/g, '\\"')}",
     "headline": string,
-    "coreProblemStatement": string,
-    "rootCauses": [
+    "blocks": [
       {
-        "cause": string,
-        "mechanism": string,
-        "evidence": string
-      }
-    ],
-    "existingSolutionGaps": [
-      {
-        "solution": string,
-        "limitation": string
-      }
-    ],
-    "opportunityFrame": string,
-    "keyStatistic": string
-  }
-</output_schema>
-
-<quality_rules>
-  REQUIRED:
-  - coreProblemStatement must be understood by a non-expert reader
-  - rootCauses must have mechanism explaining WHY it causes the problem (3-5 causes)
-  - existingSolutionGaps must name REAL alternatives (2-3 gaps)
-  - keyStatistic must be specific even if estimated
-
-  FORBIDDEN PHRASES: "In today's fast-paced world", "leverage synergies",
-  "paradigm shift", "cutting-edge", "revolutionary", "game-changer", "holistic"
-  
-  FORBIDDEN ACTIONS:
-  - DO NOT use literal internal tags or brackets in text strings (e.g. no "[cite: domain_output]")
-</quality_rules>
-  `;
-}
-
-export function buildStakeholdersPrompt(
-  synthesis: SynthesisOutput,
-  problem: string
-): string {
-  return `
-${buildSectionBase(synthesis, problem)}
-
-<task>
-  Write the "Stakeholders" section of the strategic plan.
-  
-  Guidance from synthesis agent: "${synthesis.sectionGuidance.stakeholders}"
-  
-  This section must:
-  - Identify all stakeholders with their actual motivations (not assumed ones)
-  - Articulate what success looks like FROM EACH STAKEHOLDER'S perspective
-  - Describe power dynamics and influence relationships
-  - Provide concrete engagement strategies per stakeholder
-</task>
-
-<reasoning_protocol>
-  Before producing output, reason inside <thinking> tags.
-  In your thinking work through:
-  1. Who holds the actual power in this domain?
-  2. What does each stakeholder secretly care about (their true pain points)?
-  3. How should we align them given the power dynamics outlined in the synthesis?
-  Only after completing this thinking should you produce the JSON output.
-</reasoning_protocol>
-
-<output_schema>
-  First output a <thinking> block with your reasoning. Then output a valid JSON object:
-  {
-    "sectionId": "stakeholders",
-    "headline": string,
-    "overview": string,
-    "stakeholders": [
-      {
-        "name": string,
-        "role": string,
-        "painPoints": string[],
-        "successCriteria": string,
-        "engagementStrategy": string,
-        "influence": "high" | "medium" | "low"
-      }
-    ],
-    "powerDynamics": string,
-    "alignmentStrategy": string
-  }
-</output_schema>
-
-<quality_rules>
-  REQUIRED:
-  - Produce 4-7 distinct stakeholders
-  - painPoints must be specific to this problem context — not generic
-  - successCriteria must be what THEY would say, not what we want them to say
-  - engagementStrategy must be actionable and specific to each stakeholder
-
-  FORBIDDEN:
-  - DO NOT list "users" as a single monolithic stakeholder
-  - DO NOT assume all stakeholders have aligned interests
-  - DO NOT use "engage regularly" as an engagement strategy — be specific
-  - DO NOT use literal internal tags or brackets in text strings (e.g. no "[cite: domain_output]")
-</quality_rules>
-  `;
-}
-
-export function buildSolutionApproachPrompt(
-  synthesis: SynthesisOutput,
-  problem: string
-): string {
-  return `
-${buildSectionBase(synthesis, problem)}
-
-<task>
-  Write the "Solution Approach" section of the strategic plan.
-  
-  Guidance from synthesis agent: "${synthesis.sectionGuidance.solutionApproach}"
-  Strategic posture recommended: ${synthesis.strategicPosture} — ${synthesis.postureRationale}
-  
-  This section must:
-  - Articulate the core strategic approach and why it was chosen over alternatives
-  - Break down the solution into 3-4 structural pillars
-  - Explain what makes this approach differentiated
-  - Be honest about tradeoffs made
-</task>
-
-<reasoning_protocol>
-  Before producing output, reason inside <thinking> tags.
-  In your thinking work through:
-  1. What is the structural core of this solution given the strategic posture?
-  2. What are the 3-4 pillars that uphold this core approach?
-  3. What painful trade-offs must we accept to make this succeed?
-  Only after completing this thinking should you produce the JSON output.
-</reasoning_protocol>
-
-<output_schema>
-  First output a <thinking> block with your reasoning. Then output a valid JSON object:
-  {
-    "sectionId": "solutionApproach",
-    "headline": string,
-    "strategicPosture": string,
-    "coreApproach": string,
-    "pillars": [
-      {
-        "title": string,
-        "description": string,
-        "rationale": string,
-        "keyActivities": string[]
-      }
-    ],
-    "differentiators": string[],
-    "tradeoffs": [
-      {
-        "decision": string,
-        "chose": string,
-        "tradeoff": string
+        "type": "paragraph" | "subheading" | "bullets" | "numbered" | "table" | "callout",
+        "title": string (optional, for subheading/callout/table),
+        "content": string (optional, for paragraph/callout),
+        "items": string[] (optional, for bullets/numbered),
+        "rows": [{ "label": string, "value": string }] (optional, for table)
       }
     ]
   }
@@ -568,96 +464,18 @@ ${buildSectionBase(synthesis, problem)}
 
 <quality_rules>
   REQUIRED:
-  - coreApproach must explain the strategic logic, not just describe what will be built
-  - pillars must have rationale explaining WHY this pillar, not just WHAT it is (3-4 pillars)
-  - tradeoffs must be honest — acknowledge what is being sacrificed (2-4 tradeoffs)
-  - differentiators must be structurally defensible, not just aspiration
+  - headline must be compelling and specific to this section's content
+  - id, title, and description fields must match the assigned section exactly
+  - blocks must fulfill the user's description for this section
+  - content must be specific to THIS problem — never generic boilerplate
+  - use at least 3 different block types when the section warrants it
 
-  FORBIDDEN:
-  - DO NOT describe the solution as "comprehensive" or "end-to-end" without specifics
-  - DO NOT list features — describe strategic choices
-  - DO NOT claim differentiation without explaining the mechanism
-  - DO NOT use literal internal tags or brackets in text strings (e.g. no "[cite: domain_output]")
-</quality_rules>
-  `;
-}
-
-export function buildActionPlanPrompt(
-  synthesis: SynthesisOutput,
-  problem: string
-): string {
-  return `
-${buildSectionBase(synthesis, problem)}
-
-<task>
-  Write the "Action Plan" section — the most operationally detailed section.
+  FORBIDDEN PHRASES: "In today's fast-paced world", "leverage synergies",
+  "paradigm shift", "cutting-edge", "revolutionary", "game-changer", "holistic"
   
-  Guidance from synthesis agent: "${synthesis.sectionGuidance.actionPlan}"
-  Critical path items to incorporate: ${synthesis.criticalPathItems.join(", ")}
-  
-  Structure: 3 phases (Foundation / Growth / Scale), each with:
-  - Concrete time horizon
-  - 3-5 milestones with measurable success metrics
-  - Clear phase gate (what must be true to advance)
-  - Resource requirements
-  
-  A competent team must be able to use this as a starting roadmap.
-</task>
-
-<reasoning_protocol>
-  Before producing output, reason inside <thinking> tags.
-  In your thinking work through:
-  1. What must happen first to de-risk the foundation based on the synthesis?
-  2. What are the strict phase gates that must be passed before scaling?
-  3. What measurable quick wins can build momentum in the early phase?
-  Only after completing this thinking should you produce the JSON output.
-</reasoning_protocol>
-
-<output_schema>
-  First output a <thinking> block with your reasoning. Then output a valid JSON object:
-  {
-    "sectionId": "actionPlan",
-    "headline": string,
-    "phases": [
-      {
-        "phaseNumber": number,
-        "phaseName": string,
-        "timeHorizon": string,
-        "objective": string,
-        "milestones": [
-          {
-            "title": string,
-            "description": string,
-            "successMetric": string,
-            "owner": string,
-            "dependency": string | null
-          }
-        ],
-        "resourceRequirements": {
-          "team": string[],
-          "tools": string[],
-          "budget": string
-        },
-        "phaseGate": string
-      }
-    ],
-    "criticalPath": string[],
-    "quickWins": string[]
-  }
-</output_schema>
-
-<quality_rules>
-  REQUIRED:
-  - successMetric must be MEASURABLE — a number, percentage, or binary condition
-  - phaseGate is mandatory for every phase — prevents open-ended plans
-  - quickWins must be genuinely achievable in 2 weeks with 1-2 people
-  - owner must be a ROLE not a name ("Product Lead" not "John")
-  - timeHorizon must be specific ("Weeks 1-6" not "Q1")
-
-  FORBIDDEN:
-  - DO NOT use vague metrics like "improve user experience" or "gain traction"
-  - DO NOT use vague timelines like "soon" or "in the coming months"
-  - DO NOT make phases identical in structure — each phase has a distinct character
+  FORBIDDEN ACTIONS:
+  - DO NOT change id, title, or description from the assigned values
+  - DO NOT write content for other sections
   - DO NOT use literal internal tags or brackets in text strings (e.g. no "[cite: domain_output]")
 </quality_rules>
   `;
@@ -677,6 +495,13 @@ export function buildEditorPrompt(
     .map(([id, content]) => `${id}: ${JSON.stringify(content).slice(0, 400)}...`)
     .join("\n\n");
 
+  const sectionTitle =
+    typeof currentContent === "object" &&
+    currentContent !== null &&
+    "title" in currentContent
+      ? String((currentContent as { title: string }).title)
+      : sectionId;
+
   return `
 <role>
   You are a precision document editor for high-stakes business reports.
@@ -695,7 +520,7 @@ export function buildEditorPrompt(
   </document_context>
 
   <section_to_edit>
-    Section ID: ${sectionId}
+    Section: "${sectionTitle}" (id: ${sectionId})
     Current content:
     ${JSON.stringify(currentContent, null, 2)}
   </section_to_edit>
@@ -707,8 +532,24 @@ export function buildEditorPrompt(
 
 <task>
   Rewrite the specified section following the edit instruction exactly.
-  First output a <thinking> block with your reasoning. Then output the COMPLETE rewritten section as valid JSON matching the EXACT same
-  schema as the input — same field names, same nesting structure, same sectionId.
+  First output a <thinking> block with your reasoning. Then output the COMPLETE rewritten section as valid JSON.
+
+  The section uses this schema:
+  {
+    "id": string (must not change),
+    "title": string (must not change),
+    "description": string (must not change),
+    "headline": string,
+    "blocks": [
+      {
+        "type": "paragraph" | "subheading" | "bullets" | "numbered" | "table" | "callout",
+        "title"?: string,
+        "content"?: string,
+        "items"?: string[],
+        "rows"?: [{ "label": string, "value": string }]
+      }
+    ]
+  }
 </task>
 
 <reasoning_protocol>
@@ -722,8 +563,8 @@ export function buildEditorPrompt(
 
 <quality_rules>
   REQUIRED:
-  - Output JSON must match the input schema EXACTLY — same keys, same nesting
-  - sectionId field must never change
+  - Output JSON must match the ReportSection schema — id, title, description unchanged
+  - blocks array structure must be preserved (same block types unless instruction asks to restructure)
   - After editing, the section must still make logical sense alongside other sections
 
   INSTRUCTION INTERPRETATION GUIDE:
@@ -735,8 +576,7 @@ export function buildEditorPrompt(
   - "rewrite" → full rewrite maintaining schema and consistency with other sections
 
   FORBIDDEN:
-  - NEVER add sections or fields not in the original schema
-  - NEVER change the sectionId
+  - NEVER change id, title, or description fields
   - NEVER contradict facts established in other sections
 </quality_rules>
   `;

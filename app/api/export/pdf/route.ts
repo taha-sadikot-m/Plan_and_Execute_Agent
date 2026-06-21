@@ -10,7 +10,7 @@ export const maxDuration = 30;
 export async function POST(req: NextRequest) {
   const { report }: { report: ReportJSON } = await req.json();
 
-  if (!report || !report.problemBreakdown) {
+  if (!report || !report.sections?.length) {
     return NextResponse.json({ error: "Invalid report data" }, { status: 400 });
   }
 

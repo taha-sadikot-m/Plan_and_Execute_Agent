@@ -2,35 +2,34 @@
 // The brain — runs agents in optimal parallel/sequential stages
 
 import { callAgent } from "./agentCaller";
+import { mapWithConcurrency } from "./concurrency";
 import {
   PLANNER_SYSTEM_PROMPT,
   DOMAIN_SYSTEM_PROMPT,
   RISK_SYSTEM_PROMPT,
   buildSynthesizerPrompt,
-  buildProblemBreakdownPrompt,
-  buildStakeholdersPrompt,
-  buildSolutionApproachPrompt,
-  buildActionPlanPrompt,
+  buildDynamicSectionPrompt,
 } from "./prompts";
 import type {
   PlannerOutput,
   DomainOutput,
   RiskOutput,
   SynthesisOutput,
-  ProblemBreakdownSection,
-  StakeholdersSection,
-  SolutionApproachSection,
-  ActionPlanSection,
+  ReportSection,
   ReportJSON,
   AgentLogEntry,
+  SectionConfig,
 } from "@/types";
+
+const STAGE3_CONCURRENCY = 2;
 
 function logEntry(
   stage: string,
   agent: string,
   status: AgentLogEntry["status"],
   durationMs?: number,
-  thinkingContent?: string | null
+  thinkingContent?: string | null,
+  retryMeta?: { retryDelayMs: number; retryAttempt: number }
 ): AgentLogEntry {
   return {
     stage,
@@ -38,54 +37,78 @@ function logEntry(
     status,
     durationMs,
     thinkingContent: thinkingContent || undefined,
+    retryDelayMs: retryMeta?.retryDelayMs,
+    retryAttempt: retryMeta?.retryAttempt,
     timestamp: new Date().toISOString(),
+  };
+}
+
+function makeRetryHandler(
+  stage: string,
+  agent: string,
+  onProgress?: (log: AgentLogEntry) => void
+) {
+  return ({ attempt, delayMs }: { attempt: number; delayMs: number }) => {
+    onProgress?.(
+      logEntry(stage, agent, "retrying", undefined, undefined, {
+        retryDelayMs: delayMs,
+        retryAttempt: attempt,
+      })
+    );
   };
 }
 
 export async function runPipeline(
   problem: string,
+  sections: SectionConfig[],
   onProgress?: (log: AgentLogEntry) => void
 ): Promise<ReportJSON> {
   const agentLog: AgentLogEntry[] = [];
+  const pipelineStart = Date.now();
 
   const log = (entry: AgentLogEntry) => {
     agentLog.push(entry);
     onProgress?.(entry);
   };
 
-  // ── STAGE 1: Three agents run in parallel ──────────────────────────────────
-  // Total time = slowest single agent, NOT sum of all three
-
-  log(logEntry("stage1", "planner", "running"));
-  log(logEntry("stage1", "domain", "running"));
-  log(logEntry("stage1", "risk", "running"));
-
   const userMessage = `Problem statement: "${problem}"`;
 
-  const [plannerResult, domainResult, riskResult] = await Promise.all([
-    callAgent<PlannerOutput>({
-      systemPrompt: PLANNER_SYSTEM_PROMPT,
-      userMessage,
-      agentName: "planner",
-      maxTokens: 8192,
-    }),
-    callAgent<DomainOutput>({
-      systemPrompt: DOMAIN_SYSTEM_PROMPT,
-      userMessage,
-      agentName: "domain",
-      maxTokens: 8192,
-    }),
-    callAgent<RiskOutput>({
-      systemPrompt: RISK_SYSTEM_PROMPT,
-      userMessage,
-      agentName: "risk",
-      maxTokens: 8192,
-    }),
-  ]);
+  // ── STAGE 1: Sequential — one agent at a time, no grounding ────────────────
 
+  log(logEntry("stage1", "planner", "running"));
+  const plannerResult = await callAgent<PlannerOutput>({
+    systemPrompt: PLANNER_SYSTEM_PROMPT,
+    userMessage,
+    agentName: "planner",
+    maxTokens: 8192,
+    useGrounding: false,
+    onRetry: makeRetryHandler("stage1", "planner", onProgress),
+  });
   log(logEntry("stage1", "planner", "complete", plannerResult.durationMs, plannerResult.thinkingContent));
-  log(logEntry("stage1", "domain", "complete", domainResult.durationMs, domainResult.thinkingContent));
+
+  log(logEntry("stage1", "risk", "running"));
+  const riskResult = await callAgent<RiskOutput>({
+    systemPrompt: RISK_SYSTEM_PROMPT,
+    userMessage,
+    agentName: "risk",
+    maxTokens: 8192,
+    useGrounding: false,
+    onRetry: makeRetryHandler("stage1", "risk", onProgress),
+  });
   log(logEntry("stage1", "risk", "complete", riskResult.durationMs, riskResult.thinkingContent));
+
+  log(logEntry("stage1", "domain", "running"));
+  const domainResult = await callAgent<DomainOutput>({
+    systemPrompt: DOMAIN_SYSTEM_PROMPT,
+    userMessage,
+    agentName: "domain",
+    maxTokens: 8192,
+    useGrounding: false,
+    onRetry: makeRetryHandler("stage1", "domain", onProgress),
+  });
+  log(logEntry("stage1", "domain", "complete", domainResult.durationMs, domainResult.thinkingContent));
+
+  console.log(`[Pipeline] Stage 1 complete in ${Date.now() - pipelineStart}ms`);
 
   const allReferences: Array<{ title: string; uri: string }> = [];
   const addRefs = (result: { references?: Array<{ title: string; uri: string }> }) => {
@@ -97,92 +120,77 @@ export async function runPipeline(
   addRefs(domainResult);
   addRefs(riskResult);
 
-  // ── STAGE 2: Synthesizer — sequential (needs all Stage 1 outputs) ──────────
+  // ── STAGE 2: Synthesizer — single grounded research call ───────────────────
 
+  const stage2Start = Date.now();
   log(logEntry("stage2", "synthesizer", "running"));
 
   const synthesizerPrompt = buildSynthesizerPrompt(
     plannerResult.data,
     domainResult.data,
     riskResult.data,
-    problem
+    problem,
+    sections
   );
 
   const synthesisResult = await callAgent<SynthesisOutput>({
     systemPrompt: synthesizerPrompt,
     userMessage: "Synthesize the provided agent outputs into a strategic intelligence brief.",
     agentName: "synthesizer",
-    maxTokens: 8192,
+    maxTokens: 12288,
+    useGrounding: true,
+    onRetry: makeRetryHandler("stage2", "synthesizer", onProgress),
   });
 
   log(logEntry("stage2", "synthesizer", "complete", synthesisResult.durationMs, synthesisResult.thinkingContent));
   addRefs(synthesisResult);
+  console.log(`[Pipeline] Stage 2 complete in ${Date.now() - stage2Start}ms`);
 
-  // ── STAGE 3: Four section writers run in parallel ──────────────────────────
-  // Each gets synthesis context but writes ONLY its assigned section
+  // ── STAGE 3: Section writers — max 2 concurrent, grounded ────────────────
 
-  log(logEntry("stage3", "section:problemBreakdown", "running"));
-  log(logEntry("stage3", "section:stakeholders", "running"));
-  log(logEntry("stage3", "section:solutionApproach", "running"));
-  log(logEntry("stage3", "section:actionPlan", "running"));
-
+  const stage3Start = Date.now();
   const sectionUserMessage =
     "Write your assigned section based on the strategic context provided in the system prompt.";
 
-  const [
-    problemBreakdownResult,
-    stakeholdersResult,
-    solutionApproachResult,
-    actionPlanResult,
-  ] = await Promise.all([
-    callAgent<ProblemBreakdownSection>({
-      systemPrompt: buildProblemBreakdownPrompt(synthesisResult.data, problem),
-      userMessage: sectionUserMessage,
-      agentName: "section:problemBreakdown",
-      maxTokens: 8192,
-    }),
-    callAgent<StakeholdersSection>({
-      systemPrompt: buildStakeholdersPrompt(synthesisResult.data, problem),
-      userMessage: sectionUserMessage,
-      agentName: "section:stakeholders",
-      maxTokens: 8192,
-    }),
-    callAgent<SolutionApproachSection>({
-      systemPrompt: buildSolutionApproachPrompt(synthesisResult.data, problem),
-      userMessage: sectionUserMessage,
-      agentName: "section:solutionApproach",
-      maxTokens: 8192,
-    }),
-    callAgent<ActionPlanSection>({
-      systemPrompt: buildActionPlanPrompt(synthesisResult.data, problem),
-      userMessage: sectionUserMessage,
-      agentName: "section:actionPlan",
-      maxTokens: 8192,
-    }),
-  ]);
+  const sectionResults = await mapWithConcurrency(
+    sections,
+    STAGE3_CONCURRENCY,
+    async (sec) => {
+      log(logEntry("stage3", `section:${sec.title}`, "running"));
 
-  log(logEntry("stage3", "section:problemBreakdown", "complete", problemBreakdownResult.durationMs, problemBreakdownResult.thinkingContent));
-  log(logEntry("stage3", "section:stakeholders", "complete", stakeholdersResult.durationMs, stakeholdersResult.thinkingContent));
-  log(logEntry("stage3", "section:solutionApproach", "complete", solutionApproachResult.durationMs, solutionApproachResult.thinkingContent));
-  log(logEntry("stage3", "section:actionPlan", "complete", actionPlanResult.durationMs, actionPlanResult.thinkingContent));
+      const result = await callAgent<ReportSection>({
+        systemPrompt: buildDynamicSectionPrompt(
+          synthesisResult.data,
+          problem,
+          sec,
+          synthesisResult.data.sectionGuidance[sec.id] ?? "",
+          sections.length
+        ),
+        userMessage: sectionUserMessage,
+        agentName: `section:${sec.title}`,
+        maxTokens: 8192,
+        useGrounding: true,
+        onRetry: makeRetryHandler("stage3", `section:${sec.title}`, onProgress),
+      });
 
-  addRefs(problemBreakdownResult);
-  addRefs(stakeholdersResult);
-  addRefs(solutionApproachResult);
-  addRefs(actionPlanResult);
+      log(logEntry("stage3", `section:${sec.title}`, "complete", result.durationMs, result.thinkingContent));
+      addRefs(result);
+      return { sec, result };
+    }
+  );
 
-  // De-duplicate references by URI
+  console.log(`[Pipeline] Stage 3 complete in ${Date.now() - stage3Start}ms`);
+  console.log(`[Pipeline] Total pipeline time: ${Date.now() - pipelineStart}ms`);
+
   const uniqueRefs = Array.from(
-    new Map(allReferences.map(r => [r.uri, r])).values()
+    new Map(allReferences.map((r) => [r.uri, r])).values()
   );
 
   return {
-    problemBreakdown: problemBreakdownResult.data,
-    stakeholders: stakeholdersResult.data,
-    solutionApproach: solutionApproachResult.data,
-    actionPlan: actionPlanResult.data,
+    sections: sectionResults.map(({ result }) => result.data),
     metadata: {
       problem,
+      sectionConfig: sections,
       generatedAt: new Date().toISOString(),
       agentLog,
       references: uniqueRefs,

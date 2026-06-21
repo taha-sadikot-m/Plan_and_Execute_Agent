@@ -2,6 +2,12 @@
 // app/page.tsx
 import { useState, FormEvent, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { SectionBuilder } from "@/components/SectionBuilder";
+import {
+  DEFAULT_SECTIONS,
+  validateSections,
+} from "@/lib/sectionDefaults";
+import type { SectionConfig } from "@/types";
 
 const EXAMPLES = [
   "Build a creator marketplace platform connecting brands with micro-influencers...",
@@ -11,19 +17,44 @@ const EXAMPLES = [
   "Build a mental health support platform for remote workers...",
 ];
 
+const SECTION_CONFIG_KEY = "section_config";
+
 export default function Home() {
   const [problem, setProblem] = useState("");
+  const [sections, setSections] = useState<SectionConfig[]>(DEFAULT_SECTIONS);
+  const [sectionError, setSectionError] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
     const saved = localStorage.getItem("problem");
     if (saved) setProblem(saved);
+
+    const savedSections = localStorage.getItem(SECTION_CONFIG_KEY);
+    if (savedSections) {
+      try {
+        const parsed = JSON.parse(savedSections) as SectionConfig[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSections(parsed);
+        }
+      } catch {
+        // ignore bad cache
+      }
+    }
   }, []);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!problem.trim()) return;
+
+    const validationError = validateSections(sections);
+    if (validationError) {
+      setSectionError(validationError);
+      return;
+    }
+
+    setSectionError(null);
     localStorage.setItem("problem", problem.trim());
+    localStorage.setItem(SECTION_CONFIG_KEY, JSON.stringify(sections));
     router.push("/report");
   };
 
@@ -44,8 +75,6 @@ export default function Home() {
 
       <div className="w-full max-w-4xl px-6 py-12 relative z-10 flex flex-col items-center">
 
-
-
         {/* Hero Copy */}
         <div className="text-center space-y-4 mb-12 animate-fade-in-up" style={{ animationDelay: '0.1s' }}>
           <h1 className="text-4xl md:text-6xl font-extrabold tracking-tight text-slate-900 drop-shadow-sm">
@@ -55,7 +84,7 @@ export default function Home() {
             Turn any problem into <span className="shimmer-text font-bold">an execution plan</span>
           </p>
           <p className="text-sm text-slate-500 max-w-xl mx-auto">
-            Multi-agent AI runs parallel analysis across 8 specialist agents, then synthesizes a board-ready strategic plan.
+            Multi-agent AI runs parallel analysis across specialist agents, then synthesizes a board-ready strategic plan tailored to your section outline.
           </p>
         </div>
 
@@ -70,11 +99,6 @@ export default function Home() {
                 placeholder="e.g. Build a creator marketplace platform connecting brands with micro-influencers..."
                 className="w-full h-36 bg-transparent text-slate-800 placeholder-slate-400 p-6 rounded-[20px] resize-none focus:outline-none text-lg selection:bg-orange-200 selection:text-orange-900"
               />
-              <div className="absolute top-6 left-6 pointer-events-none opacity-0 group-focus-within:opacity-100 transition-opacity">
-                {!problem && (
-                  <span className="text-slate-400 text-lg">Describe your problem or initiative...</span>
-                )}
-              </div>
             </div>
 
             <div className="flex items-center justify-between px-4 pb-3 pt-1">
@@ -82,7 +106,7 @@ export default function Home() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
                 </svg>
-                ~30–60 seconds · 8 parallel agents
+                ~30–60 seconds · parallel agents
               </div>
               <button
                 type="submit"
@@ -97,6 +121,15 @@ export default function Home() {
               </button>
             </div>
           </div>
+
+          <SectionBuilder
+            sections={sections}
+            onChange={(next) => {
+              setSections(next);
+              if (sectionError) setSectionError(null);
+            }}
+            error={sectionError}
+          />
 
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
             <span className="bg-slate-100 px-2 py-1 rounded-md border border-slate-200 flex items-center gap-1 font-medium">
@@ -113,6 +146,7 @@ export default function Home() {
             {EXAMPLES.map((ex, i) => (
               <button
                 key={i}
+                type="button"
                 onClick={() => setProblem(ex)}
                 className="text-xs bg-white text-slate-600 border border-slate-200 px-4 py-2 rounded-full hover:bg-slate-50 hover:border-slate-300 hover:text-slate-900 transition-all shadow-sm max-w-[280px] truncate"
                 title={ex}
@@ -122,9 +156,6 @@ export default function Home() {
             ))}
           </div>
         </div>
-
-        {/* Pipeline Visualizer Hint */}
-
 
       </div>
     </main>

@@ -60,7 +60,9 @@ export function AgentPipeline({ status, agentLog }: Props) {
                 ${agent.thinkingContent ? 'cursor-pointer hover:ring-2 ring-orange-200' : ''}
                 ${agent.status === "complete" 
                   ? "bg-white border-emerald-200 text-emerald-700 shadow-sm" 
-                  : agent.status === "running"
+                  : agent.status === "retrying"
+                    ? "bg-amber-50 border-amber-300 text-amber-800 shadow-sm"
+                    : agent.status === "running"
                     ? `bg-white border-${colorClass}-200 text-${colorClass}-700 shadow-sm shadow-${colorClass}-500/10`
                     : "bg-slate-50 border-slate-200 text-slate-400"
                 }
@@ -68,12 +70,20 @@ export function AgentPipeline({ status, agentLog }: Props) {
             >
               {agent.status === "running" && <span className={`w-1.5 h-1.5 rounded-full bg-${colorClass}-500 animate-ping absolute`} />}
               {agent.status === "running" && <span className={`w-1.5 h-1.5 rounded-full bg-${colorClass}-500 relative`} />}
+              {agent.status === "retrying" && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse relative" />
+              )}
               {agent.status === "complete" && (
                 <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
                   <path d="M1 4L3 6L7 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
                 </svg>
               )}
               {agent.agent.replace("section:", "")}
+              {agent.status === "retrying" && agent.retryDelayMs != null && (
+                <span className="opacity-80 ml-1 text-[10px] text-amber-700">
+                  retry ~{Math.ceil(agent.retryDelayMs / 1000)}s
+                </span>
+              )}
               {agent.durationMs && <span className="opacity-60 ml-1 text-[10px]">{((agent.durationMs)/1000).toFixed(1)}s</span>}
             </div>
           ))}

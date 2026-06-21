@@ -84,115 +84,42 @@ export interface SynthesisOutput {
   criticalPathItems: string[];
   watchOutFor: string[];
   opportunityHighlights: string[];
-  sectionGuidance: {
-    problemBreakdown: string;
-    stakeholders: string;
-    solutionApproach: string;
-    actionPlan: string;
-  };
+  sectionGuidance: Record<string, string>;
 }
 
-// ─── Report Section Types ─────────────────────────────────────────────────────
+// ─── Section Configuration (user-defined) ─────────────────────────────────────
 
-export interface ProblemBreakdownSection {
-  sectionId: "problemBreakdown";
-  headline: string;
-  coreProblemStatement: string;
-  rootCauses: Array<{
-    cause: string;
-    mechanism: string;
-    evidence: string;
-  }>;
-  existingSolutionGaps: Array<{
-    solution: string;
-    limitation: string;
-  }>;
-  opportunityFrame: string;
-  keyStatistic: string;
-}
-
-export interface StakeholderEntry {
-  name: string;
-  role: string;
-  painPoints: string[];
-  successCriteria: string;
-  engagementStrategy: string;
-  influence: "high" | "medium" | "low";
-}
-
-export interface StakeholdersSection {
-  sectionId: "stakeholders";
-  headline: string;
-  overview: string;
-  stakeholders: StakeholderEntry[];
-  powerDynamics: string;
-  alignmentStrategy: string;
-}
-
-export interface SolutionApproachSection {
-  sectionId: "solutionApproach";
-  headline: string;
-  strategicPosture: string;
-  coreApproach: string;
-  pillars: Array<{
-    title: string;
-    description: string;
-    rationale: string;
-    keyActivities: string[];
-  }>;
-  differentiators: string[];
-  tradeoffs: Array<{
-    decision: string;
-    chose: string;
-    tradeoff: string;
-  }>;
-}
-
-export interface Milestone {
+export interface SectionConfig {
+  id: string;
   title: string;
   description: string;
-  successMetric: string;
-  owner: string;
-  dependency: string | null;
 }
 
-export interface Phase {
-  phaseNumber: number;
-  phaseName: string;
-  timeHorizon: string;
-  objective: string;
-  milestones: Milestone[];
-  resourceRequirements: {
-    team: string[];
-    tools: string[];
-    budget: string;
-  };
-  phaseGate: string;
+// ─── Report Section Types (AI-generated, generic block model) ─────────────────
+
+export interface ContentBlock {
+  type: "paragraph" | "subheading" | "bullets" | "numbered" | "table" | "callout";
+  title?: string;
+  content?: string;
+  items?: string[];
+  rows?: Array<{ label: string; value: string }>;
 }
 
-export interface ActionPlanSection {
-  sectionId: "actionPlan";
+export interface ReportSection {
+  id: string;
+  title: string;
+  description: string;
   headline: string;
-  phases: Phase[];
-  criticalPath: string[];
-  quickWins: string[];
+  blocks: ContentBlock[];
 }
 
 // ─── Full Report ──────────────────────────────────────────────────────────────
 
-export type SectionData =
-  | ProblemBreakdownSection
-  | StakeholdersSection
-  | SolutionApproachSection
-  | ActionPlanSection;
-
 export interface ReportJSON {
-  problemBreakdown: ProblemBreakdownSection;
-  stakeholders: StakeholdersSection;
-  solutionApproach: SolutionApproachSection;
-  actionPlan: ActionPlanSection;
+  sections: ReportSection[];
   metadata: {
     problem: string;
+    sectionConfig: SectionConfig[];
     generatedAt: string;
     agentLog: AgentLogEntry[];
     references: Array<{ title: string; uri: string }>;
@@ -204,9 +131,11 @@ export interface ReportJSON {
 export interface AgentLogEntry {
   stage: string;
   agent: string;
-  status: "running" | "complete" | "error";
+  status: "running" | "complete" | "error" | "retrying";
   durationMs?: number;
   thinkingContent?: string;
+  retryDelayMs?: number;
+  retryAttempt?: number;
   timestamp: string;
 }
 
@@ -228,11 +157,9 @@ export interface PipelineState {
 
 // ─── Edit Types ───────────────────────────────────────────────────────────────
 
-export type SectionId =
-  | "problemBreakdown"
-  | "stakeholders"
-  | "solutionApproach"
-  | "actionPlan";
+export type SectionId = string;
+
+export type SectionData = ReportSection;
 
 export interface EditRequest {
   sectionId: SectionId;

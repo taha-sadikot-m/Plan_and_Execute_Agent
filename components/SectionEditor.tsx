@@ -79,7 +79,7 @@ export function SectionEditor({
           <div>
             <h2 className="text-xl font-bold text-slate-900">Edit with AI</h2>
             <p className="text-sm font-medium text-slate-500 mt-1">
-              Gemini rewrites only this section, maintaining full document consistency.
+              Editing: <span className="text-slate-700">{currentContent.title}</span>
             </p>
           </div>
           <button

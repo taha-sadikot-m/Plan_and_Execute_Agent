@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
 
     const result = await callAgent<SectionData>({
       systemPrompt,
-      userMessage: `Edit the ${sectionId} section as instructed. Return the complete updated section as JSON.`,
+      userMessage: `Edit the "${currentContent.title}" section as instructed. Return the complete updated section as JSON.`,
       agentName: "editor",
       maxTokens: 3500,
     });

@@ -3,19 +3,32 @@
 
 import { NextRequest } from "next/server";
 import { runPipeline } from "@/lib/orchestrator";
-import type { AgentLogEntry } from "@/types";
+import { validateSections } from "@/lib/sectionDefaults";
+import type { AgentLogEntry, SectionConfig } from "@/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
 
 export async function POST(req: NextRequest) {
-  const { problem } = await req.json();
+  const body = await req.json();
+  const { problem, sections } = body as {
+    problem?: string;
+    sections?: SectionConfig[];
+  };
 
   if (!problem || typeof problem !== "string" || problem.trim().length < 10) {
     return new Response(
       JSON.stringify({ error: "Problem statement must be at least 10 characters." }),
       { status: 400, headers: { "Content-Type": "application/json" } }
     );
+  }
+
+  const sectionError = validateSections(sections ?? []);
+  if (sectionError) {
+    return new Response(JSON.stringify({ error: sectionError }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   const encoder = new TextEncoder();
@@ -32,6 +45,7 @@ export async function POST(req: NextRequest) {
 
         const report = await runPipeline(
           problem.trim(),
+          sections!,
           (logEntry: AgentLogEntry) => {
             send("agent_log", logEntry);
           }

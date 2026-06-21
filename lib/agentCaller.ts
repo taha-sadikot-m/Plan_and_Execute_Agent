@@ -2,12 +2,16 @@
 // Single utility for all Gemini API calls — handles parsing, stripping thinking tags, retries
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { getGeminiConfig, type GeminiRetryOptions } from "./geminiConfig";
+import { runGeminiWithRetries } from "./geminiQueue";
 
 export interface AgentCallOptions {
   systemPrompt: string;
   userMessage: string;
   agentName: string;
   maxTokens?: number;
+  useGrounding?: boolean;
+  onRetry?: GeminiRetryOptions["onRetry"];
 }
 
 export interface AgentCallResult<T> {
@@ -24,16 +28,14 @@ function stripThinkingTags(text: string): string {
 }
 
 function extractJSON(text: string): string {
-  // First, try explicitly labeled json fences
   const jsonFenceMatch = text.match(/```json\s*([\s\S]*?)```/);
   if (jsonFenceMatch) return jsonFenceMatch[1].trim();
 
-  // If no explicit json fence, find the true outermost object/array
   const objStart = text.indexOf("{");
   const objEnd = text.lastIndexOf("}");
   const arrStart = text.indexOf("[");
   const arrEnd = text.lastIndexOf("]");
-  
+
   let start = -1;
   let end = -1;
 
@@ -55,44 +57,86 @@ function extractJSON(text: string): string {
 function extractThinking(text: string): string | null {
   const match = text.match(/<thinking>([\s\S]*?)<\/thinking>/);
   if (match) return match[1].trim();
-  
+
   const mdMatch = text.match(/```thinking\s*([\s\S]*?)```/);
   return mdMatch ? mdMatch[1].trim() : null;
 }
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+function getClient(): GoogleGenerativeAI {
+  const { apiKey } = getGeminiConfig();
+  return new GoogleGenerativeAI(apiKey);
+}
 
-export async function callAgent<T>(
-  options: AgentCallOptions
-): Promise<AgentCallResult<T>> {
-  const { systemPrompt, userMessage, agentName, maxTokens = 4096 } = options;
-  const start = Date.now();
+async function generateWithModel(
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens: number,
+  useGrounding: boolean
+) {
+  const { model } = getGeminiConfig();
+  const genAI = getClient();
 
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+  const modelConfig: Parameters<GoogleGenerativeAI["getGenerativeModel"]>[0] = {
+    model,
     systemInstruction: systemPrompt,
-    tools: [
-      {
-        // @ts-ignore - Google SDK types might lag, but this enables Google Search Grounding natively
-        googleSearch: {},
-      },
-    ],
     generationConfig: {
       maxOutputTokens: maxTokens,
       temperature: 0.7,
     },
-  });
+  };
 
-  const result = await model.generateContent(userMessage);
+  if (useGrounding) {
+    modelConfig.tools = [
+      {
+        // @ts-expect-error Google SDK types may lag behind grounding tool support
+        googleSearch: {},
+      },
+    ];
+  }
+
+  const generativeModel = genAI.getGenerativeModel(modelConfig);
+  return generativeModel.generateContent(userMessage);
+}
+
+export async function callAgent<T>(
+  options: AgentCallOptions
+): Promise<AgentCallResult<T>> {
+  const {
+    systemPrompt,
+    userMessage,
+    agentName,
+    maxTokens = 4096,
+    useGrounding = true,
+    onRetry,
+  } = options;
+  const start = Date.now();
+  let attemptCount = 1;
+
+  const result = await runGeminiWithRetries(
+    () => generateWithModel(systemPrompt, userMessage, maxTokens, useGrounding),
+    {
+      agentName,
+      onRetry: (info) => {
+        attemptCount = info.attempt + 1;
+        onRetry?.(info);
+      },
+    }
+  );
+
+  const durationMs = Date.now() - start;
+  console.log(
+    `[Gemini] ${agentName} completed in ${durationMs}ms (grounding=${useGrounding}, attempts=${attemptCount})`
+  );
 
   if (!result.response) {
     throw new Error(`Agent ${agentName} returned no response from Gemini.`);
   }
 
-  // Check if response was truncated due to token limit
   const finishReason = result.response.candidates?.[0]?.finishReason;
   if (finishReason === "MAX_TOKENS") {
-    console.warn(`⚠️  Agent ${agentName} hit MAX_TOKENS limit (${maxTokens}). Response may be incomplete.`);
+    console.warn(
+      `Agent ${agentName} hit MAX_TOKENS limit (${maxTokens}). Response may be incomplete.`
+    );
   }
 
   const fullText = result.response.text();
@@ -109,29 +153,26 @@ export async function callAgent<T>(
   try {
     data = JSON.parse(jsonText) as T;
   } catch (parseError) {
-    // Show more context for debugging - first 1000 chars of full text
     console.error(`JSON Parse Error for ${agentName}:`, parseError);
     console.error(`Full text length: ${fullText.length} chars`);
-    console.error(`Clean text length: ${cleanText.length} chars`);
-    console.error(`Extracted JSON length: ${jsonText.length} chars`);
     console.error(`Finish reason: ${finishReason}`);
-    
+
     if (finishReason === "MAX_TOKENS") {
       throw new Error(
         `Agent ${agentName} hit token limit (${maxTokens} tokens) and returned incomplete JSON. ` +
-        `Increase maxTokens in orchestrator.ts for this agent.`
+          `Increase maxTokens in orchestrator.ts for this agent.`
       );
     }
-    
+
     throw new Error(
       `Agent ${agentName} returned invalid JSON.\nRaw output: ${fullText.slice(0, 1000)}`
     );
   }
 
-  // Extract google search grounding chunks
   const references: Array<{ title: string; uri: string }> = [];
   try {
-    const rawChunks = result.response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    const rawChunks =
+      result.response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
     for (const chunk of rawChunks) {
       if (chunk.web?.uri && chunk.web?.title) {
         references.push({ uri: chunk.web.uri, title: chunk.web.title });
@@ -144,7 +185,7 @@ export async function callAgent<T>(
   return {
     data,
     thinkingContent,
-    durationMs: Date.now() - start,
+    durationMs,
     references,
   };
 }
